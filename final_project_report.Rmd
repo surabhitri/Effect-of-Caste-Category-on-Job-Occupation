@@ -1,0 +1,261 @@
+---
+title: "Effect of Caste Category on Job Occupation"
+output: pdf_document
+author: 'Surabhi Trivedi'
+---
+
+* * *
+```{r setup, include=FALSE}
+# DO NOT ALTER CODE IN THIS CHUNK
+# The very first time you use this R markdown file, you should install each of the packages below.
+# The same goes for other packages you might decide to use
+# Remember that you only need to install each R package once in R (ever -- unless you change computers).
+# All you need to do whenever you need to use the package again (after restarting the R session),
+# is to use the library function to call the package.
+# For example, type install.packages("knitr") in the console to install the knitr package. 
+knitr::opts_chunk$set(echo = TRUE, fig.width=5, fig.height=4, fig.align = 'center')
+library(dplyr)
+```
+
+```{r, echo = FALSE,warning=FALSE, message=FALSE, header=FALSE}
+#Loading the data
+rm(list = ls())
+data <- load("/Users/sue/Documents/MIDS/Modeling and Repr of Data/Final Project/36151-0001-Data.rda")
+data <- da36151.0001 
+rm(da36151.0001)
+
+########Data Cleaning 
+#Keeping the variables that we want 
+cols <- select(data, c('SURVEY', 'STATEID', 'HHID', 'PERSONID', 'RO3', 'RO4', 'RO5', 'RO6', 'RO7', 'FM1', 'FM36Y', 'AN1', 'AN5Y', 'ED2', 'ED3',
+                       'EDUC7', 'MM7Y', 'MM12Y', 'URBAN4_2011', 'METRO', 'ID11', 'ID13', 'GROUPS', 'COPC', 'ASSETS', 'INCOME', 'WS3NM', 'WS4', 'WS5'))
+#summary(cols)
+cols <- cols[complete.cases(cols[ , 22]),]
+
+###collapsing the response variable into 3 categories
+cols$occupation_cat <- with(cols, ifelse(WS4 %in% c("(098) Drivers 98", 
+                                                    "(081) Carpenters 81", "(054) Sweepers 54", "(052) Cooks/waiters 52", "(056) Barbers 56", 
+                                                    "(051) House keepers 51", "(071) Miners 71",
+                                                    "(080) Shoe makers 80", "(053) Maids 53", "(078) Tobacco 78"
+), 'LowPay', ifelse(
+  WS4 %in% c("(003) Eng. tech 3", "(002) Engineers 2", "(007) Physicians 7",
+             "(005) Life scientists 5", "(012) Accountants 12", "(023) Mgr finance 23", "(014) Lawyers 14",
+             "(009) Other scientific 9", "(004) Air/ship officers 4",
+             "(011) Economists 11", "(010) Statisticians 10", "(029) Managerial nec 29", "(021) Govt officials 21", "(024) Mgr manf 24"), 'HighPay', 
+  ifelse(
+    WS4 %in% c("(015) Teachers 15",
+               "(025) Mgr transp/commun 25", "(008) Nursing 8", "(016) Journalists 16", "(020) Elected officials 20", "(030) Clerical Supe 30",
+               "(033) Book-keepers 30", "(034) Computing op 34", "(035) Clerical nec 35"), 'MedPay', 'remove'))))
+data2<-cols[!(cols$occupation_cat=="remove"),]
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, header=FALSE}
+library(knitr)
+library(ggplot2)
+#library(kableExtra)
+#library(lattice)
+#library(dplyr)
+library(rms) #for VIF
+library(MASS)
+library(jtools)
+library(arm)
+library(pROC)
+library(e1071)
+library(caret)
+require(gridExtra)
+library(stargazer)
+library(tidyverse)
+library(lme4)
+library(sjPlot)
+library(lattice)
+library(arm)
+library(sjmisc)
+library(data.table)
+library(rms) #for VIF
+library(nnet)
+library(xtable)
+```
+
+```{r, echo = FALSE,warning=FALSE, message=FALSE, header=FALSE}
+#renaming columns
+setnames(data2, old = c('RO3','RO4', 'RO5', 'RO6', 'RO7', 'FM1', 'FM36Y', 'AN1', 'AN5Y', 'ED2', 'ED3', 'EDUC7', 'MM7Y', 'MM12Y', 'URBAN4_2011',
+                        'ID11', 'ID13', 'COPC'), 
+         new = c('sex','rel_to_head', 'age', 'marrital_status', 'primary_act_status',
+                 'owned_cultivated', 'own_farm_work', 'owns_livestick',
+                 'animal_care_work', 'literacy', 'english_ability', 'educ_level',
+                 'uses_computer', 'owns_mobile', 'urban_rural', 'religion',
+                 'caste_category', 'household_exp'))
+
+#convert occ category to factor
+data2$occupation_cat <- factor(data2$occupation_cat)
+
+#removing NAs from household exp and assets
+data2 <- data2[complete.cases(data2[ , 24:25]),]
+#cols2 <- cols2[complete.cases(cols2[ , 11]),]
+#cols2 <- cols2[complete.cases(cols2[ , 13]),]
+data2 <- data2[complete.cases(data2[ , 14:16]),]
+
+#dropping level gauna
+data3<-data2[!(data2$marrital_status=="(5) Married no gauna 5"),]
+data3$marrital_status = droplevels(data3$marrital_status)
+
+#dropping level gauna
+data3<-data3[!(data3$religion=="(9) None 9"),]
+data3$religion = droplevels(data3$religion)
+```
+
+### Summary
+With this paper, I aim to investigate if belonging to a backward caste category (SC, ST, OBC) imposes a restriction on the kind of job opportunities available to that person. In other words, I want to understand if Indians belonging to backward caste categories typically end up working as cooks, waiter, maids, sweepers, drivers, miners, barbers etc. i.e. jobs which are deemed to be of lower esteem by our society. To infer this I have used multi-level modelling and proportional odds model. My final model suggests that backward caste categories face serioous discrimination on the basis of caste which has a damaging effect on the job opportunities available to them.
+
+### Introduction
+India is organized into rigid social groups called the caste system. These caste categories are characterized by hereditary transmission of life style, *occupation* and social status. The five caste classes into which India is divided are (in descending prestige): Brahmins (priests), Kshatriyas (warriors), Vaishyas (merchants), Shudras (artisans and labourers), and Scheduled Castes (SC)/ Dalits. This ranking depends in part on its relative level of “impurity,” determined by the group’s traditional contact with any of a number of “pollutants,” including blood, menstrual flow, saliva, dung, leather, dirt, and hair as a result of their occupation (rag pickers/scavengers/sweepers). India’s many tribal peoples — officially designated as Scheduled Tribes (ST) — have also been given status similar to that of the Scheduled Castes. Additionally, communities that have been historically marginalised in India, and continue to face oppression and social, economic and educational isolation, but do not fall into the Scheduled Castes or Scheduled Tribes list, fall into the Other Backward Classes category (OBC). For my analysis I will be focusing on the backward castes (SC, ST, OBC) and comparing them to the remaining forward castes. 
+
+The data that I have used for my analysis has been obtained from the Indian Human Development Survey (IHDS). It is a nationally representative, multi-topic panel survey of 41,554 households in 1503 villages and 971 urban neighborhoods across India. I will be using the IHDS data from the second round which was collected in 2011-2012. The data has 337 variables and 204,569 rows in total. I have used *WS4* (job occupation category) to create my response variable. *WS4* has 96 categories so I collapsed this variable into a factor variable having three levels - *occupation_cat*. The three levels are HighPay, MedPay, LowPay. All the job categories that I mentioned above in the summary fall in the LowPay level. I want to understand if a person belonging to a lower caste category has higher odds of having a LowPay (low paying) job. 
+
+The report is organized as follows. Data describes the data that I used, how it was cleaned and an exploratory analysis of this data. Model shows the description of my model fitting and selection process. It also includes the interpretation of my model and main findings. The Conclusion generalizes my investigation and potential limitations of my research.
+
+### Data
+The first step in cleaning my data was to reduce the dimensionality of the data. Initially my data had 337 variables and 204,569 observations. Since it would have been very hard to work with such a high number of predictors I first proceeded by (1) keeping only the variables that were important to my analysis (2) removing variables that encoded similar information. With this I was able to reduce the number of variables from 337 to 30. The variables that I selected covered the following topics: demographics, employment, education and literacy, caste and religion, standard of living. The second step was to collapse the response variable to 3 categories as mentioned above. I chose 33 categories out of the 96 categories that were present in that data and categorized them into the 3 levels. I chose occupation categories which could be clearly classified into 1 of the 3 levels and were not ambiguous. For example categories such as teachers, nurses, journalists were classified into MedPay (medium paying), categories such as lawyers, statisticians, economists, doctors were classified into HighPay (high paying jobs). This step reduced the number of observations from 204,569 to 11,237 observations. I further removed 15 rows which had NAs as I wanted to use those variables in my analysis and since I already had enough observations I assumed it would not have a major effect on my analysis. On performing the chi-squared test to understand if the relation between my predictors and response variable was significant, I found that the p value for 11 variables was significant. For 2 variables: *religion* and *marrital_status* I got the error message that the chi-squared approximation may be incorrect due to lack of sufficient data points in 1 bin each. I decided to drop these levels as I felt that these variables were important. Dropping these levels resulted in the loss of 11 observations. The data set that I finally worked with had 11,211 observations and 13 predictors. The predictor of interest is the caste category (*caste_category*) which encodes what caste category does the person being surveyed belong to.
+
+EDA of the data revealed that the data was well balanced in terms of the response variable i.e. each of the 3 categories had enough number of data points for a meaningful analysis. Furthermore, the effect of caste category on occupation category was clearly visible as shown in the table below. The backward caste categories (SC, ST, OBC) have a higher percentage of people in the LowPay category as compared to the forward caste categories.
+
+```{r echo=FALSE, warning=FALSE}
+# occupation_category vs sex
+table = apply(table(data3[,c("occupation_cat","caste_category")])/sum(table(data3[,c("occupation_cat","caste_category")])),
+      2,function(x) x/sum(x)) 
+kable(table, digits = 2)
+```
+
+I also noticed that there was a clear difference in the number of assets owned by people belonging to the different occupation categories thus corroborating the collapsing of the 33 occupation categories into 3 categories. Below is the plot for reference.
+
+```{r echo=FALSE, warning=FALSE, fig.height=3, fig.width=4}
+ggplot(data3,aes(x=occupation_cat, y=ASSETS, fill=occupation_cat)) +
+  geom_boxplot() + coord_flip() +
+  scale_fill_brewer(palette="Reds") +
+  labs(title="Occupaition Category vs Assets",
+       x="Occupation Category",y="Assets") + 
+  theme_classic() + theme(legend.position="none") +
+theme(legend.position="none",axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5)) 
+```
+
+
+### Model 
+For model fitting I started with a basic multinomial logistic regression model with all the 13 predictors. It turned out that all the predictors were statistically significant. The **AIC** for this model was **12367.11** and the **Residual Deviance** was **12215.11**. 
+
+However, since I was interested in inferring only *caste_category* I proceeded to check interactions between *caste_category* and the other predictors. The anova test for most predictor pairs was not significant and for some predictor pairs the model failed to converge due to lack of enough data points in different bins. The interaction between *caste_category* and *urban_rural* turned out to be significant. The predictor *urban_rural* indicates whether the person being surveyed lived in an urban or rural area. I proceeded by including this interaction in my model. The **AIC** for this model was **12358.43** and the **Residual Deviance** was **12146.43**. The decrease in AIC and residual deviance isn't a lot but including this interaction is paramount to avoid multicollinearity with my predictor of interest. 
+
+Next I did variable selection with BIC. The model selected both *caste_category* and *caste_category:urbal_rural*. But both AIC and Residual Deviance of this model were a little higher than the previous 2 models. The binned residual plots for this and the previous 2 models looked fairly random. 95% of the points lie within the standard error lines. The binned residual plots for continuous variables for the model with interactions are shown in the appendix.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, header=FALSE, results=FALSE,fig.keep='all', include=FALSE}
+mod1_int10 <- multinom(occupation_cat ~ ASSETS + age + sex + owned_cultivated
+                      + owns_livestick  + english_ability + uses_computer + owns_mobile + caste_category * urban_rural +
+                        household_exp + religion + educ_level + marrital_status + literacy, data=data3)
+# n <- nrow(data3)
+# null_model <- multinom(occupation_cat ~ caste_category * urban_rural,data=data3)
+# model_step <- step(null_model,scope=formula(mod1_int10),direction="both",
+#                    trace=0,k = log(n))
+# #model_step$call
+# #summary(model_step)
+# 
+# final_model_mln <- model_step
+
+###### Predictions
+#predicted probabilities for cases in the model
+predprobs <- fitted(mod1_int10)
+#look at first five rows just to see what results
+#predprobs[1:5,]
+
+###### Diagnostics
+####diagnostics comparing average raw residuals across bins based on predictor values
+#for HighPay:  create a raw residual using only the first column of the predicted probabilities
+rawresid1 <- (data3$occupation_cat == 'HighPay') -  predprobs[,1]
+
+#for LowPay:  create a raw residual using only the second column of the predicted probabilities
+rawresid2 <- (data3$occupation_cat == 'LowPay') -  predprobs[,2]
+
+#for MedPay:  create a raw residual using only the third column of the predicted probabilities
+rawresid3 <- (data3$occupation_cat == 'MedPay') -  predprobs[,3]
+
+```
+
+
+Since my response variable is ordinal (LowPay < MedPay < HighPay) I also tried fitting a proportional odds model to my data. On fitting the model to all the 13 predictors I was getting an error message indicating that my model was rank deficient i.e. some variable was lacking enough data points for the model to be fit. I tried to understand if there was a specific variable that was causing this problem and it turned out that removing *household_exp* (household expenses) solved the problem. The **AIC** for this model was **13540.56** and the **Residual Deviance** was **13486.56**. On checking for interactions with *caste_category* using the anova test I found that the interaction between *caste_category* and *urban_rural*, *sex*, *age*, *owns_livestock*, *english_ability*, and *uses_computer* were significant.
+
+To select for variables and see if variable selection improved the AIC and residual deviance I used BIC with all the predictors (except *household_exp*) and interactions mentioned above for the full model. The null model only had *caste_category* as the predictor. The model selected 7 predictors but did not select *caste_category*. Next I selected variables using AIC to see if it selected *caste_category*. Although it selected *caste_category* and a few interactions with *caste_category* I was not satisfied with the model as the **AIC** was **13496.52** and Residual Deviance was **13372.52**. Both metrics were higher in comparison to the previous multinomial logistic regressions models I fit. Below is a summary of all models that I fit:
+
+```{r echo=FALSE, results='asis', header=FALSE}
+tb1 <- data.frame(
+  a = c("Multinomial: All predictors", "Multinomial: All predictors + interaction", "Multinomial: BIC", "Proportional Odds: All predictors (except household_exp)", "Proportional Odds: All predictors (except household_exp) + interactions"),
+  m = c(12367.11, 12358.43, 12409.2, 13540.56, 13496.52),
+  ad = c(12215.11, 12146.43, 12241.2, 13486.56, 13372.52)
+  )
+colnames(tb1) <- c("", "AIC", "Residual Deviance")
+xtable(tb1)
+```
+
+
+Based on the above table I selected the second multinomial logistic regression model as my final model. The model is robust, has low AIC and residual deviance, includes interaction terms with my variable of interest, and binned residual plots for the model are reasonably random. The summary of the model can be found in the appendix. Below is the regression equation for my selected model:
+
+$$Baseline = HighPay\text{ }(j=1), j = 2 = LowPay, j = 3 = MedPay$$
+
+$$log(\frac{\pi_ij}{\pi_i1}) = \beta_{0j} + \beta_{1j}Age_{i1} + \beta_{2j}Sex_{i2} + \beta_{3j}CasteCategory_{i3} + \beta_{4j}OwnedCultivated_{i4} + \beta_{5j}OwnsLivestock_{i5} + $$
+$$\beta_{6j}UsesComputer_{i6} + \beta_{7j}EnglishAbility_{i7} + \beta_{8j}OwnsMobile_{i8} + \beta_{9j}Literacy_{i9} + \beta_{10j}UrbalRural_{i10} + \beta_{10j}Religion_{i10} +  $$
+$$\beta_{11j}HouseholdExpenses_{i11} + \beta_{12j}MaritalStatus_{i12} + \beta_{13j}EducationLevel_{i13} + \beta_{14j}CasteCategory_{i14}:UrbanRural_{i14}$$
+
+**Model Interpretation:**
+
+Main Effects
+
+Caste Category: Scheduled Caste (SC)
+Keeping all other variables constant, for a person belonging to a **Scheduled Caste** category, **the odds of having a low paying job versus having a high paying job are 2.53 times higher** than the corresponding odds for a person who belongs to the **Brahmin caste category**.
+
+Caste Category: Scheduled Tribe (ST)
+Keeping all other variables constant, for a person belonging to a **Scheduled Tribe** category, **the odds of having a low paying job versus having a high paying job are 2.68 times higher** than the corresponding odds for a person who belongs to the **Brahmin caste category**.
+
+Caste Category: Other Backward Classes (OBC)
+Keeping all other variables constant, for a person belonging to **Other Backward Classes**, **the odds of having a low paying job versus having a high paying job are 1.60 times higher** than the corresponding odds for a person who belongs to the **Brahmin caste category**.
+
+Interaction Effects:
+
+* Keeping all other variables constant, for a person belonging to a **Scheduled Caste** category and living in a **developed village**, **the odds of having a low paying job versus having a high paying job are 1.4 times higher** than the corresponding odds for a person who belongs to the **Brahmin caste category** and lives in a **metro city**. The corresponding odds for a person living in an urban non-metro city are 3.44. This suggests that backward caste people who move to the city in search of jobs end up taking work that is low paying as compared to people who stay back in developed villages and work there. This could be because people who stay back in villages to work might be taking up jobs such as teaching, nursing, typists or other medium paying jobs. People who move from villages to the city in search of work on the other hand mostly end up taking work such as driving, cooking, sweeping which is relatively low paying. 
+
+*  Keeping all other variables constant, for a person belonging to a **Scheduled Tribe** category and living in a **developed village**, **the odds of having a low paying job versus having a high paying job are 0.79 times lower** than the corresponding odds for a person who belongs to the **Brahmin caste category** and lives in a **metro city**. This is counter intuitive and might be due to the fact that there are only 23 data points for STs living in metro areas. STs are classified as marginalised communities on the basis of geographical isolation because of which it is harder to find data for STs living in metro/ urban areas. 
+
+
+### Conclusion
+My analysis suggests that backward caste categories (SC, ST, OBC) have higher odds of having a low paying job in comparison to forward castes such as Brahmins. These odds vary for different kind of caste categories with Scheduled Tribes having the highest such odds. Additionally, the interaction between *caste_category* and *urban_rural* was significant. The effect of living in a metro city as compared to a village on occupation category is different for different types of castes. In some cases it is advantageous for a person belonging to SC to be living in a village compared to an urban city as detailed above. For STs the trend is different and I noted that STs living in villages have lower odds of having a low paying job as compared to Brahmins living in metro cities. 
+
+In summary, SCs, STs, and OBCs are severely oppressed in terms of the jobs opportunities they end up getting. This is a result of the systemic social, economic, educational and geographical (for STs) discrimination they face. Caste categorization is pernicious to the Indian society and had lead to the oppression and social isolation of millions in India. The government must take steps to dismantle this hierarchy and build a more egalitarian society.
+
+
+
+***
+## *R Code Appendix*
+```{r echo=FALSE}
+##can do binned plots for continuous variables
+#make a 2 by 2 graphical display
+#age
+par(mfcol = c(2,2))
+binnedplot(data3$age, rawresid1, xlab = "Age", ylab = "Raw residuals", main = "HighPay")
+binnedplot(data3$age, rawresid2, xlab = "Age", ylab = "Raw residuals", main = "LowPay")
+binnedplot(data3$age, rawresid3, xlab = "Age", ylab = "Raw residuals", main = "MedPay")
+#looks good
+
+#assets
+par(mfcol = c(2,2))
+binnedplot(data3$ASSETS, rawresid1, xlab = "Assets", ylab = "Raw residuals", main = "HighPay")
+binnedplot(data3$ASSETS, rawresid2, xlab = "Assets", ylab = "Raw residuals", main = "LowPay")
+binnedplot(data3$ASSETS, rawresid3, xlab = "Assets", ylab = "Raw residuals", main = "MedPay")
+#looks good
+
+#household_exp
+par(mfcol = c(2,2))
+binnedplot(data3$household_exp, rawresid1, xlab = "Household Expenses", ylab = "Raw residuals", main = "HighPay")
+binnedplot(data3$household_exp, rawresid2, xlab = "Household Expenses", ylab = "Raw residuals", main = "LowPay")
+binnedplot(data3$household_exp, rawresid3, xlab = "Household Expenses", ylab = "Raw residuals", main = "MedPay")
+```
+
+
+```{r echo=FALSE}
+summary(mod1_int10)
+exp(confint(mod1_int10))
+```
